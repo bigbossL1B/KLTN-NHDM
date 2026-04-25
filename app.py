@@ -1,5 +1,8 @@
 from datetime import date, timedelta
-import numpy as np
+from pathlib import Path
+import base64
+import mimetypes
+
 import pandas as pd
 import streamlit as st
 import plotly.express as px
@@ -7,11 +10,18 @@ import plotly.express as px
 from data.industry_tickers import INDUSTRY_TICKERS
 from utils.data_loader import load_price_data, make_price_pivot, calculate_returns
 from utils.portfolio import (
-    select_top_by_sharpe, build_allocation_equal, build_allocation_80_20,
-    port_char, port_char_from_series, sharpe_port, sharpe_from_series, cumulative_from_weights,
+    select_top_by_sharpe,
+    build_allocation_equal,
+    build_allocation_80_20,
+    port_char,
+    port_char_from_series,
+    sharpe_port,
+    sharpe_from_series,
 )
 from utils.modeling import prepare_train_test, train_multi_seed
 
+
+# ================= CONFIG =================
 RF_ANNUAL = 0.045
 TRADING_DAYS = 252
 TOP_N = 10
@@ -20,117 +30,317 @@ EPOCHS = 100
 BATCH_SIZE = 32
 SEED_LIST = [7, 21, 42, 99, 123]
 
-st.set_page_config(page_title="Portfolio Optimization App", page_icon="📈", layout="wide")
+st.set_page_config(
+    page_title="Portfolio Optimization App",
+    page_icon="📈",
+    layout="wide",
+)
 
-st.markdown("""
+
+# ================= IMAGE HELPER =================
+def image_to_base64(path: str) -> str | None:
+    file_path = Path(path)
+    if not file_path.exists():
+        return None
+
+    mime_type, _ = mimetypes.guess_type(file_path)
+    if mime_type is None:
+        mime_type = "image/png"
+
+    with open(file_path, "rb") as f:
+        data = base64.b64encode(f.read()).decode("utf-8")
+
+    return f"data:{mime_type};base64,{data}"
+
+
+logo_src = image_to_base64("assets/hub_logo.png")
+
+
+# ================= CSS =================
+st.markdown(
+    """
 <style>
+/* ================= GLOBAL ================= */
 .stApp {
-    background: linear-gradient(rgba(255,255,255,.88), rgba(255,255,255,.92)),
+    background: linear-gradient(rgba(255,255,255,.90), rgba(255,255,255,.94)),
                 url('https://images.unsplash.com/photo-1563986768494-4dee2763ff3f?q=80&w=1600&auto=format&fit=crop');
     background-size: cover;
     background-attachment: fixed;
 }
-.block-container { max-width: 1180px; padding-top: 2rem; }
+
+.block-container {
+    max-width: 1240px;
+    padding-top: 2.2rem;
+    padding-bottom: 3rem;
+}
+
+/* Sidebar nhìn sạch hơn */
+section[data-testid="stSidebar"] {
+    background: #f1f4f8;
+}
+
+section[data-testid="stSidebar"] h1,
+section[data-testid="stSidebar"] h2,
+section[data-testid="stSidebar"] h3 {
+    color: #283142;
+}
+
+/* ================= HERO ================= */
+.hero {
+    width: 100%;
+    min-height: 420px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+
+    padding: 48px 70px;
+    border-radius: 28px;
+
+    background: rgba(255,255,255,0.92);
+    backdrop-filter: blur(8px);
+    box-shadow: 0 18px 48px rgba(31, 45, 61, 0.13);
+    margin-bottom: 28px;
+}
+
+/* Logo + tên trường nằm ngang */
+.brand-row {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 26px;
+    margin-bottom: 22px;
+}
+
+.logo {
+    width: 150px;
+    height: auto;
+    display: block;
+}
+
+.school {
+    color: #155b93;
+    font-weight: 800;
+    font-size: 25px;
+    line-height: 1.35;
+    letter-spacing: .2px;
+    text-transform: uppercase;
+}
+
+/* đường kẻ trang trí */
+.hero-divider {
+    width: 520px;
+    max-width: 80%;
+    margin: 4px auto 22px auto;
+    display: flex;
+    align-items: center;
+    gap: 18px;
+}
+
+.hero-divider::before,
+.hero-divider::after {
+    content: "";
+    flex: 1;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, #aab7c8, transparent);
+}
+
+.hero-dot {
+    width: 9px;
+    height: 9px;
+    background: #0d78c8;
+    transform: rotate(45deg);
+    border-radius: 2px;
+}
+
+/* 2 phần bạn khoanh đỏ căn giữa */
+.app-title {
+    max-width: 860px;
+    margin: 0 auto;
+    text-align: center;
+
+    font-size: 39px;
+    font-weight: 850;
+    color: #2d3342;
+    line-height: 1.28;
+    letter-spacing: -0.8px;
+}
+
+.guide-wrap {
+    text-align: center;
+    margin-top: 20px;
+}
+
+.guide {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+
+    color: #2f8a3a;
+    font-weight: 800;
+    font-size: 24px;
+    margin-bottom: 14px;
+}
+
+.guide-text {
+    max-width: 760px;
+    margin: 0 auto;
+    text-align: center;
+
+    color: #343b48;
+    font-size: 16px;
+    line-height: 1.85;
+}
+
+.guide-text .steps {
+    margin-top: 14px;
+    display: inline-block;
+    text-align: left;
+}
+
+.guide-text b {
+    color: #1f2937;
+}
+
+code {
+    background: rgba(46,125,50,.11);
+    color: #1b7f3a;
+    padding: 3px 8px;
+    border-radius: 8px;
+    font-weight: 700;
+}
+
+/* Info box */
+div[data-testid="stAlert"] {
+    border-radius: 12px;
+}
+
+/* Metric card */
 div[data-testid="stMetric"] {
-    background: rgba(255,255,255,.80);
+    background: rgba(255,255,255,.82);
     padding: 16px;
     border-radius: 16px;
     box-shadow: 0 4px 18px rgba(0,0,0,.06);
 }
-.card {
-    background: rgba(255,255,255,.78);
-    padding: 22px;
-    border-radius: 20px;
-    box-shadow: 0 4px 22px rgba(0,0,0,.08);
-    margin-bottom: 18px;
-}
-.hero {
-    text-align: center;
-    padding: 42px 44px 34px 44px;
-    border-radius: 26px;
-    background: linear-gradient(rgba(255,255,255,.72), rgba(255,255,255,.78));
-    box-shadow: 0 12px 34px rgba(0,0,0,.10);
-    margin-bottom: 24px;
-    backdrop-filter: blur(3px);
-}
-.school {
-    color: #1e5b91;
-    font-weight: 800;
-    font-size: 26px;
-    line-height: 1.2;
-    letter-spacing: .3px;
-    margin-bottom: 34px;
-}
-.app-title {
-    color: #2d3342;
-    font-weight: 800;
-    font-size: 34px;
-    line-height: 1.25;
-    margin-bottom: 26px;
-}
-.guide {
-    color: #2e7d32;
-    font-weight: 800;
-    font-size: 22px;
-    margin-bottom: 12px;
-}
-.guide-text {
-    display: inline-block;
-    text-align: left;
-    color: #303642;
-    font-size: 16px;
-    line-height: 1.75;
-}
-code {
-    background: rgba(46,125,50,.10);
-    color: #1b5e20;
-    padding: 2px 6px;
-    border-radius: 6px;
+
+/* Responsive */
+@media (max-width: 900px) {
+    .hero {
+        padding: 34px 28px;
+    }
+
+    .brand-row {
+        flex-direction: column;
+        gap: 14px;
+    }
+
+    .logo {
+        width: 125px;
+    }
+
+    .school {
+        text-align: center;
+        font-size: 20px;
+    }
+
+    .app-title {
+        font-size: 30px;
+    }
+
+    .guide {
+        font-size: 21px;
+    }
+
+    .guide-text {
+        font-size: 15px;
+    }
 }
 </style>
-""", unsafe_allow_html=True)
+""",
+    unsafe_allow_html=True,
+)
 
+# ================= SIDEBAR =================
 with st.sidebar:
     st.header("⚙️ Thiết lập")
+
     api_key = st.text_input(
         "VNStock API key",
         type="password",
-        help="Dán API key từ vnstocks.com để tăng giới hạn request. Bỏ trống thì app tự chạy chậm để né limit Guest.",
+        help="Dán API key từ vnstocks.com để tăng giới hạn request. Bỏ trống thì app vẫn chạy theo giới hạn Guest.",
     )
+
     industry = st.selectbox(
         "Chọn ngành",
         list(INDUSTRY_TICKERS.keys()),
-        index=list(INDUSTRY_TICKERS.keys()).index("Thép") if "Thép" in INDUSTRY_TICKERS else 0,
+        index=list(INDUSTRY_TICKERS.keys()).index("Thép")
+        if "Thép" in INDUSTRY_TICKERS
+        else 0,
     )
 
     st.markdown("### 📅 Khoảng thời gian phân tích")
-    start_date = st.date_input("Chọn ngày bắt đầu", value=date(2015, 1, 1))
-    end_date = st.date_input("Chọn ngày kết thúc", value=date(2025, 12, 31))
 
-    # UX sản phẩm: người dùng chỉ chọn một khoảng thời gian.
-    # App tự dùng phần cuối cùng của khoảng thời gian để đánh giá hiệu quả.
-    # Với mặc định 2015-2025, giai đoạn đánh giá sẽ là năm 2025.
+    start_date = st.date_input("Ngày bắt đầu", value=date(2015, 1, 1))
+    end_date = st.date_input("Ngày kết thúc", value=date(2025, 12, 31))
+
     test_start = date(end_date.year, 1, 1)
     test_end = end_date
     train_start = start_date
     train_end = test_start - timedelta(days=1)
 
-    uploaded = st.file_uploader("Hoặc upload CSV [time, ticker, close]", type=["csv"])
+    uploaded = st.file_uploader("Upload CSV", type=["csv"])
     run_btn = st.button("🚀 Bắt đầu", use_container_width=True)
 
-st.markdown("""
-<div class="hero">
-    <div class="school">TRƯỜNG ĐẠI HỌC NGÂN HÀNG THÀNH PHỐ HỒ CHÍ MINH</div>
-    <div class="app-title">Xây dựng danh mục đầu tư tối ưu bằng<br/>mô hình LSTM - GRU</div>
-    <div class="guide">🧪 Hướng dẫn sử dụng</div>
-    <div class="guide-text">
-        Ứng dụng này có hai tùy chọn dữ liệu đầu vào:<br/>
-        <b>1.</b> Chọn ngành và khoảng thời gian: hệ thống tự động lấy dữ liệu, học mô hình và đánh giá hiệu quả ở giai đoạn cuối.<br/>
-        <b>2.</b> Hoặc bạn có thể tải file CSV chứa dữ liệu gồm các cột <code>time</code>, <code>ticker</code>, <code>close</code>.
-    </div>
-</div>
-""", unsafe_allow_html=True)
 
+# ================= HEADER =================
+logo_html = (
+    f'<img src="{logo_src}" class="logo" alt="HUB Logo">'
+    if logo_src
+    else '<div style="font-size:72px;">🏦</div>'
+)
+
+st.markdown(
+    f"""
+<div class="hero">
+<div class="brand-row">
+{logo_html}
+<div class="school">
+TRƯỜNG ĐẠI HỌC NGÂN HÀNG<br>
+THÀNH PHỐ HỒ CHÍ MINH
+</div>
+</div>
+
+<div class="hero-divider">
+<div class="hero-dot"></div>
+</div>
+
+<div class="app-title">
+Xây dựng danh mục đầu tư tối ưu<br>
+bằng mô hình LSTM - GRU
+</div>
+
+<div class="hero-divider" style="margin-top:24px;">
+<div class="hero-dot"></div>
+</div>
+
+<div class="guide-wrap">
+<div class="guide">📘 Hướng dẫn sử dụng</div>
+<div class="guide-text">
+Ứng dụng có 2 cách nhập dữ liệu:
+<br>
+<div class="steps">
+<b>1.</b> Chọn ngành + thời gian → hệ thống tự động lấy dữ liệu, train model và đánh giá.<br>
+<b>2.</b> Upload CSV với các cột:
+<code>time</code>, <code>ticker</code>, <code>close</code>
+</div>
+</div>
+</div>
+</div>
+""",
+    unsafe_allow_html=True,
+)
+
+# ================= VALIDATE =================
 if not run_btn:
     st.info("Bấm **Bắt đầu** để tải dữ liệu, xây dựng mô hình và xem kết quả.")
     st.stop()
@@ -143,19 +353,25 @@ if start_date >= test_start:
     st.error("Khoảng thời gian chưa đủ để xây dựng mô hình. Hãy chọn ngày bắt đầu trước năm kết thúc ít nhất 1 năm.")
     st.stop()
 
+
 st.info(
-    f"📌 Hệ thống sẽ dùng dữ liệu từ **{train_start:%Y/%m/%d} → {train_end:%Y/%m/%d}** để xây dựng mô hình "
-    f"và đánh giá hiệu quả trong giai đoạn **{test_start:%Y/%m/%d} → {test_end:%Y/%m/%d}**."
+    f"📌 Hệ thống sẽ dùng dữ liệu từ **{train_start:%Y/%m/%d} → {train_end:%Y/%m/%d}** "
+    f"để xây dựng mô hình và đánh giá hiệu quả trong giai đoạn "
+    f"**{test_start:%Y/%m/%d} → {test_end:%Y/%m/%d}**."
 )
 
+
+# ================= PROGRESS =================
 status_box = st.empty()
 progress_bar = st.progress(0)
 log_box = st.empty()
 logs = []
 
+
 def ui_progress(idx, total, ticker, status, detail):
     pct = min(idx / max(total, 1), 1.0)
     progress_bar.progress(pct)
+
     icon = {
         "loading": "🔄",
         "ok": "✅",
@@ -165,50 +381,65 @@ def ui_progress(idx, total, ticker, status, detail):
         "cooldown": "😴",
         "cache": "💾",
     }.get(status, "•")
+
     line = f"{icon} [{idx}/{total}] {ticker}: {detail or status}"
     status_box.info(line)
     logs.append(line)
     log_box.code("\n".join(logs[-12:]), language="text")
 
+
+# ================= LOAD DATA =================
 with st.spinner("Đang tải dữ liệu và xử lý..."):
     if uploaded is not None:
         raw_data = pd.read_csv(uploaded)
+
         required = {"time", "ticker", "close"}
         if not required.issubset(raw_data.columns):
             st.error("CSV phải có đủ cột: time, ticker, close.")
             st.stop()
+
         failed = []
     else:
         tickers = sorted(list(set(INDUSTRY_TICKERS[industry])))
-        # Giống notebook Cell 4: xóa trùng và sort mã trước khi tải.
-        # Không dùng cache: mỗi lần bấm nút app sẽ gọi API và xử lý lại từ đầu.
+
         raw_data, failed = load_price_data(
-            tickers, train_start, test_end,
-            api_key=api_key, progress_callback=ui_progress
+            tickers,
+            train_start,
+            test_end,
+            api_key=api_key,
+            progress_callback=ui_progress,
         )
+
     if raw_data.empty:
         st.error("Không tải được dữ liệu.")
         st.stop()
+
     price_pivot = make_price_pivot(raw_data)
     returns_df = calculate_returns(price_pivot)
 
+
 progress_bar.progress(1.0)
-status_box.success("Đã tải/xử lý dữ liệu xong. Không lưu cache. Returns được tính giống notebook Cell 7.")
-st.caption(f"Khoảng dữ liệu tải được: {price_pivot.index.min().date()} → {price_pivot.index.max().date()} | Returns: {returns_df.index.min().date()} → {returns_df.index.max().date()} | Số dòng returns: {len(returns_df)}")
+status_box.success("Đã tải/xử lý dữ liệu xong.")
+
+st.caption(
+    f"Khoảng dữ liệu tải được: {price_pivot.index.min().date()} → {price_pivot.index.max().date()} | "
+    f"Returns: {returns_df.index.min().date()} → {returns_df.index.max().date()} | "
+    f"Số dòng returns: {len(returns_df)}"
+)
 
 if failed:
     with st.expander("Một số mã không tải được"):
         st.dataframe(pd.DataFrame(failed), use_container_width=True)
 
-# Giống notebook Cell 8 tuyệt đối: tính Sharpe trên returns_df full đã tải và lấy head(10).
-# Không tự drop mã theo độ phủ dữ liệu, vì notebook không có bước đó.
+
+# ================= SHARPE =================
 if returns_df.shape[1] < TOP_N:
-    st.error(f"Không đủ mã sau xử lý giống notebook. Cần ít nhất {TOP_N}, hiện có {returns_df.shape[1]}.")
+    st.error(f"Không đủ mã sau xử lý. Cần ít nhất {TOP_N}, hiện có {returns_df.shape[1]}.")
     st.stop()
 
 selected_symbols, sharpe_table = select_top_by_sharpe(returns_df, top_n=TOP_N)
 
-st.subheader("📌 Top 10 mã được chọn theo Sharpe giống notebook")
+st.subheader("📌 Top 10 mã cổ phiếu có Sharpe Ratio cao nhất")
 st.write(", ".join(selected_symbols))
 
 m1, m2, m3 = st.columns(3)
@@ -216,69 +447,145 @@ m1.metric("Số mã ban đầu", price_pivot.shape[1])
 m2.metric("Số mã sau dropna", returns_df.shape[1])
 m3.metric("Số mã train", len(selected_symbols))
 
-with st.expander("Xem Sharpe từng mã giống notebook Cell 8"):
-    st.dataframe(sharpe_table.reset_index().rename(columns={"index": "ticker", 0: "Sharpe"}), use_container_width=True)
+with st.expander("Xem Sharpe Ratio từng mã"):
+    st.dataframe(
+        sharpe_table.reset_index().rename(columns={"index": "ticker", 0: "Sharpe"}),
+        use_container_width=True,
+    )
 
+
+# ================= PREPARE TRAIN/TEST =================
 try:
-    X_train, y_train, train_dates, X_test, y_test, test_dates, train_returns, test_returns, scaler, debug_shapes = prepare_train_test(
-        price_pivot, selected_symbols, train_start, train_end, test_start, test_end, window_size=WINDOW_SIZE
+    (
+        X_train,
+        y_train,
+        train_dates,
+        X_test,
+        y_test,
+        test_dates,
+        train_returns,
+        test_returns,
+        scaler,
+        debug_shapes,
+    ) = prepare_train_test(
+        price_pivot,
+        selected_symbols,
+        train_start,
+        train_end,
+        test_start,
+        test_end,
+        window_size=WINDOW_SIZE,
     )
 except Exception as e:
-    st.error(f"Lỗi tạo dữ liệu train/test: {e}")
-    st.warning("Cách xử lý nhanh: chọn khoảng ngày có đủ dữ liệu hơn, hoặc kiểm tra các mã bị thiếu dữ liệu ở tập test.")
+    st.error(f"Lỗi tạo dữ liệu mô hình: {e}")
+    st.warning("Cách xử lý nhanh: chọn khoảng ngày có đủ dữ liệu hơn hoặc kiểm tra các mã bị thiếu dữ liệu.")
     st.stop()
 
-st.info(f"Dữ liệu mô hình: giai đoạn học X={X_train.shape}, y={y_train.shape} | giai đoạn đánh giá X={X_test.shape}, y={y_test.shape}")
+st.info(
+    f"Dữ liệu mô hình: giai đoạn học X={X_train.shape}, y={y_train.shape} | "
+    f"giai đoạn đánh giá X={X_test.shape}, y={y_test.shape}"
+)
+
 with st.expander("Thông tin kỹ thuật về dữ liệu mô hình"):
     st.json({k: str(v) for k, v in debug_shapes.items()})
 
+
+# ================= TRAIN MODEL =================
 try:
     with st.spinner("Đang xây dựng mô hình LSTM-GRU nhiều lần để chọn kết quả tốt nhất, bước này có thể hơi lâu..."):
         best, runs_df = train_multi_seed(
-            X_train, y_train, X_test, y_test, test_dates, selected_symbols,
-            seed_list=SEED_LIST, epochs=EPOCHS, batch_size=BATCH_SIZE,
+            X_train,
+            y_train,
+            X_test,
+            y_test,
+            test_dates,
+            selected_symbols,
+            seed_list=SEED_LIST,
+            epochs=EPOCHS,
+            batch_size=BATCH_SIZE,
         )
 except Exception as e:
     st.error(f"Train model bị lỗi: {e}")
     st.stop()
 
 st.success(f"Mô hình tốt nhất: lần chạy #{best['seed']} | Sharpe LSTM-GRU Dynamic: {best['sharpe']:.4f}")
-with st.expander("Kết quả từng lần chạy mô hình"):
-    st.dataframe(runs_df.style.format({"Lợi nhuận năm (%)": "{:.2f}", "Rủi ro năm (%)": "{:.2f}", "Sharpe": "{:.4f}"}), use_container_width=True)
 
+with st.expander("Kết quả từng lần chạy mô hình"):
+    st.dataframe(
+        runs_df.style.format(
+            {
+                "Lợi nhuận năm (%)": "{:.2f}",
+                "Rủi ro năm (%)": "{:.2f}",
+                "Sharpe": "{:.4f}",
+            }
+        ),
+        use_container_width=True,
+    )
+
+
+# ================= RESULT =================
 weights_lstm_avg = best["pred_weights"].mean(axis=0)
-results_lstm = pd.DataFrame({"Asset": selected_symbols, "Weight": weights_lstm_avg}).sort_values("Weight", ascending=False).reset_index(drop=True)
+
+results_lstm = (
+    pd.DataFrame({"Asset": selected_symbols, "Weight": weights_lstm_avg})
+    .sort_values("Weight", ascending=False)
+    .reset_index(drop=True)
+)
+
 allo_1 = build_allocation_equal(selected_symbols)
 allo_2 = build_allocation_80_20(train_returns)
 
 Er_lstm, std_lstm = port_char_from_series(best["portfolio_returns"], annualize=True)
 Er_1, std_1 = port_char(allo_1, test_returns, annualize=True)
 Er_2, std_2 = port_char(allo_2, test_returns, annualize=True)
+
 sharpe_lstm = sharpe_from_series(best["portfolio_returns"])
 sharpe_1 = sharpe_port(allo_1, test_returns)
 sharpe_2 = sharpe_port(allo_2, test_returns)
 
-comparison = pd.DataFrame({
-    "Chiến lược đầu tư": ["LSTM-GRU (Dynamic)", "Phân bổ đều", "Phân bổ 80-20"],
-    "Lợi nhuận trung bình (%)": [Er_lstm * 100, Er_1 * 100, Er_2 * 100],
-    "Độ lệch chuẩn (%)": [std_lstm * 100, std_1 * 100, std_2 * 100],
-    "Hệ số Sharpe": [sharpe_lstm, sharpe_1, sharpe_2],
-})
+comparison = pd.DataFrame(
+    {
+        "Chiến lược đầu tư": ["LSTM-GRU (Dynamic)", "Phân bổ đều", "Phân bổ 80-20"],
+        "Lợi nhuận trung bình (%)": [Er_lstm * 100, Er_1 * 100, Er_2 * 100],
+        "Độ lệch chuẩn (%)": [std_lstm * 100, std_1 * 100, std_2 * 100],
+        "Hệ số Sharpe": [sharpe_lstm, sharpe_1, sharpe_2],
+    }
+)
 
 st.subheader("📊 Kết quả so sánh chiến lược")
-st.dataframe(comparison.style.format({"Lợi nhuận trung bình (%)": "{:.2f}", "Độ lệch chuẩn (%)": "{:.2f}", "Hệ số Sharpe": "{:.4f}"}), use_container_width=True)
+st.dataframe(
+    comparison.style.format(
+        {
+            "Lợi nhuận trung bình (%)": "{:.2f}",
+            "Độ lệch chuẩn (%)": "{:.2f}",
+            "Hệ số Sharpe": "{:.4f}",
+        }
+    ),
+    use_container_width=True,
+)
 
-curves = pd.DataFrame(index=test_returns.index)
-curves["LSTM-GRU (Dynamic)"] = (1 + best["portfolio_returns"]).cumprod()
-curves["Phân bổ đều"] = cumulative_from_weights(allo_1, test_returns)
-curves["Phân bổ 80-20"] = cumulative_from_weights(allo_2, test_returns)
-fig_curve = px.line(curves, x=curves.index, y=curves.columns, title="Cumulative Return trên giai đoạn đánh giá")
-st.plotly_chart(fig_curve, use_container_width=True)
 
 st.subheader("🥧 Tỷ trọng trung bình danh mục LSTM-GRU")
 results_lstm["Weight (%)"] = results_lstm["Weight"] * 100
+
 cc1, cc2 = st.columns([1, 1])
+
 with cc1:
-    st.dataframe(results_lstm.style.format({"Weight": "{:.4f}", "Weight (%)": "{:.2f}%"}), use_container_width=True)
+    st.dataframe(
+        results_lstm.style.format(
+            {
+                "Weight": "{:.4f}",
+                "Weight (%)": "{:.2f}%",
+            }
+        ),
+        use_container_width=True,
+    )
+
 with cc2:
-    st.plotly_chart(px.pie(results_lstm, names="Asset", values="Weight", title="Tỷ trọng trung bình LSTM-GRU"), use_container_width=True)
+    fig = px.pie(
+        results_lstm,
+        names="Asset",
+        values="Weight",
+        title="Tỷ trọng trung bình LSTM-GRU",
+    )
+    st.plotly_chart(fig, use_container_width=True)
